@@ -96,7 +96,7 @@ escstr (const char* s)
 
 
 const char*
-escargs(size_t argc, char* argv[])
+escargs(size_t argc, char* const argv[])
 {
   static char u[4096];
   size_t i, lu, ls;
@@ -122,7 +122,7 @@ escargs(size_t argc, char* argv[])
  * copied into BUF and referenced from ARGV.
  */
 int
-splitargs (const char* s, char** argv, size_t maxargs,
+splitargs (const char* s, char* argv[], size_t maxargs,
            char* buf, size_t maxbuf)
 {
   char c, quote= 0;

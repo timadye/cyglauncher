@@ -21,11 +21,13 @@
 
 #include "escstr.h"
 
-DWORD ddeInstance= 0;
-const char ddeServiceName[]= "cyglaunch";
-const char *prog= "cyglaunch";
-int opte= 0, opth= 0;
-
+static const char ddeServiceName[]= "cyglaunch";
+static const char cmd_envvar[]= "CYGLAUNCH_EXEC";  /* must be upper case because Cygwin converts DOS envvars to u/c */
+static const char cyglauncher_cmd[]= "cyglauncher-start";
+static const char *cyglauncher_args= NULL;
+static const char *prog= "cyglaunch";  /* replaced with argv[0] if known */
+static DWORD ddeInstance= 0;
+static int opte= 0, opth= 0;
 
 
 static HDDEDATA CALLBACK
@@ -41,7 +43,7 @@ DdeServerProc (UINT uType, UINT uFmt, HCONV hConv, HSZ ddeTopic, HSZ ddeItem,
 #ifdef __CYGWIN__
 #define errmsg(...) (fprintf(stderr,__VA_ARGS__), fflush(stderr))
 #else
-void
+static void
 errmsg(const char* fmt,...)
 {
   char s[4096];
@@ -53,13 +55,13 @@ errmsg(const char* fmt,...)
 }
 #endif
 
-void
+static void
 perrorWin(const char* prefix, DWORD errnum)
 {
   LPTSTR lpMsgBuf= NULL;
   if (!FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                      NULL, errnum,
-                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
+                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), /* Default language */
                      (LPTSTR) &lpMsgBuf, 0, NULL))
     errmsg("%s: %s: error number %ld\n", prog, prefix, errnum);
   else
@@ -68,7 +70,7 @@ perrorWin(const char* prefix, DWORD errnum)
     LocalFree(lpMsgBuf);
 }
 
-void
+static void
 perrorDde(const char* prefix, DWORD errnum)
 {
   const char* msg;
@@ -76,6 +78,7 @@ perrorDde(const char* prefix, DWORD errnum)
   switch (errnum) {
   case DMLERR_NO_CONV_ESTABLISHED:
     msg= "failed to establish connection to cyglauncher";
+    break;
 
   case DMLERR_DATAACKTIMEOUT:
   case DMLERR_EXECACKTIMEOUT:
@@ -97,23 +100,61 @@ perrorDde(const char* prefix, DWORD errnum)
   errmsg("%s: %s: %s (error %ld)\n", prog, prefix, msg, errnum);
 }
 
-int
+
+static int
+start_cyglauncher(const char* cmd)
+{
+  DWORD err, ldir;
+  LPTSTR dir= NULL, cwd= "";
+
+  if (!SetEnvironmentVariable(cmd_envvar, cmd)) {
+    perrorWin("SetEnvironmentVariable error", GetLastError());
+    return 1;
+  }
+  ldir= GetCurrentDirectory(0, NULL);
+  if (ldir) {
+    dir= (char*) malloc(ldir * sizeof(LPTSTR*));
+    if (GetCurrentDirectory(ldir, dir)) cwd= dir;
+  }
+  err= (DWORD) ShellExecute(NULL, "open", cyglauncher_cmd, cyglauncher_args, cwd, SW_SHOWMINIMIZED);
+  free(dir);
+  if (err <= 32) {
+    perrorWin(cyglauncher_cmd, err);
+    return 1;
+  }
+  if (!SetEnvironmentVariable(cmd_envvar, NULL))
+    perrorWin("SetEnvironmentVariable error (unset)", GetLastError());  /* not fatal */
+  return 0;
+}
+
+
+static int
 sendCommand(const char* topic, const char* command)
 {
   HSZ ddeService, ddeTopic;
   HCONV ddeConv;
   HDDEDATA ddeData;
   HDDEDATA ddeReturn;
+  UINT err;
 
   ddeService= DdeCreateStringHandle(ddeInstance, (LPTSTR) ddeServiceName, 0);
   ddeTopic=   DdeCreateStringHandle(ddeInstance, (LPTSTR) topic, 0);
   ddeConv= DdeConnect(ddeInstance, ddeService, ddeTopic, NULL);
-  if (!ddeConv) perrorDde("DdeConnect", DdeGetLastError(ddeInstance));
+  if (!ddeConv) {
+    err= DdeGetLastError(ddeInstance);
+    DdeFreeStringHandle(ddeInstance, ddeService);
+    DdeFreeStringHandle(ddeInstance, ddeTopic);
+    if (err == DMLERR_NO_CONV_ESTABLISHED) {
+      if (strcmp(topic, "exec") == 0) return start_cyglauncher(command);
+      if (strcmp(topic, "exit") == 0) return 1;  /* already stopped! */
+    }
+    perrorDde("DdeConnect", err);
+    return 0;
+  }
   DdeFreeStringHandle(ddeInstance, ddeService);
   DdeFreeStringHandle(ddeInstance, ddeTopic);
-  if (!ddeConv) return 0;
 
-  ddeData= DdeCreateDataHandle(ddeInstance, (LPTSTR) command,
+  ddeData= DdeCreateDataHandle(ddeInstance, (LPBYTE) command,
                                strlen(command)+1, 0, 0, CF_TEXT, 0);
   if (!ddeData) {
     perrorDde("DdeCreateDataHandle", DdeGetLastError(ddeInstance));
@@ -130,7 +171,7 @@ sendCommand(const char* topic, const char* command)
   return 1;
 }
 
-int
+static int
 launch(const char* u)
 {
   UINT err;
@@ -154,7 +195,8 @@ launch(const char* u)
   return 0;
 }
 
-const char*
+
+static const char*
 parseopt(const char* p)
 {
   switch (*p++) {
@@ -162,6 +204,7 @@ parseopt(const char* p)
     opte= 1;
     break;
   case 'h':
+  case '?':
     opth= 1;
     break;
   default:
@@ -171,7 +214,7 @@ parseopt(const char* p)
 }
 
 
-int
+static int
 usage()
 {
   errmsg("Usage: %s [-e | COMMAND]\n", prog);
@@ -215,7 +258,9 @@ main(int argc, char* argv[])
 
   return launch(u);
 }
+
 #else
+
 int APIENTRY
 WinMain(HINSTANCE hInst, HINSTANCE gPrevInst, LPSTR lpCmdLine, int nCmdShow)
 {

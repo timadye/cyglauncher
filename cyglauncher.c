@@ -10,22 +10,28 @@
  * This software is provided "as is" without express or implied warranty.
  */
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 #ifdef __CYGWIN__
+#include <signal.h>
 #include <sys/cygwin.h>
 #endif
 #include <windows.h>
 
 #include "escstr.h"
 
-DWORD ddeInstance= 0;
 typedef int (*topicHandlerType)(const void *data, DWORD ldata);
-char ddeServiceName[]= "cyglaunch";
+static const char ddeServiceName[]= "cyglaunch";
+static const char cmd_envvar[]= "CYGLAUNCH_EXEC";  /* must be upper case because Cygwin converts DOS envvars to u/c */
+static const char *prog;
+static DWORD ddeInstance= 0;
+static int opth= 0, optH= 0;
 
 
-const char*
+static const char*
 myasctime()
 {
   static char buf[20];
@@ -35,71 +41,84 @@ myasctime()
   return buf;
 }
 
+static int
+spawn(size_t argc, char* const argv[])
+{
+  pid_t pid;
+  fflush(NULL);
+  if ((pid= fork()) == 0) {
+#ifdef __CYGWIN__
+    if (!optH) {
+      sigset_t sigset;
+      if (!sigemptyset(&sigset) && !sigaddset(&sigset, SIGHUP))
+        sigprocmask(SIG_BLOCK, &sigset, NULL);
+    }
+#endif
+    execvp(argv[0], argv);
+    perror(argv[0]);
+    exit((errno == ENOENT) ? 127 : 126);
+  } else if (pid == -1) {
+    fprintf(stderr, "%s: %s\n", myasctime(), escargs(argc, argv));
+    perror("  -> fork failed");
+    fflush(stderr);
+    return 0;
+  }
+  fprintf(stderr, "%s-%d: %s\n", myasctime(), pid, escargs(argc, argv));
+  fflush(stderr);
+  return 1;
+}
 
 static int
 execHandler(const void *data, DWORD ldata)
 {
-  pid_t pid;
-  char *args[1024], *argbuf, *argbuf2= NULL;
-  int ntok;
-  size_t i, largbuf, largbuf2= 0;
+  char *argv[1024], *argbuf;
+  int argc, ok= 0;
+  size_t largbuf;
 
   largbuf= strlen (data)+1;
   argbuf= (char*) malloc (largbuf * sizeof(char));
-  ntok= splitargs(data, args, sizeof(args)/sizeof(args[0]), argbuf, largbuf);
-  if (ntok < 0) {
+  argc= splitargs(data, argv, sizeof(argv)/sizeof(argv[0]), argbuf, largbuf);
+  if        (argc <  0) {
     fprintf(stderr, "%s: %s\n", myasctime(), (const char*) data);
     fprintf(stderr, "  -> command execution failed: too many command arguments\n");
     fflush(stderr);
-    free(argbuf);
-    return 0;
-  }
-  if (ntok == 0) {
+  } else if (argc == 0) {
     fprintf(stderr, "%s: null command ignored\n", myasctime());
     fflush(stderr);
-    free(argbuf);
-    return 0;
-  }
-
+  } else {
 #ifdef __CYGWIN__
-  for (i= 0; i<ntok; i++) {
-    if (args[i][0] == '[') {
-      size_t larg;
-      larg= strlen(args[i]+1);   /* length-1 */
-      if (args[i][larg] == ']') {
-        char* p;
-        args[i][larg]= '\0';
-        argbuf2= realloc(argbuf2, largbuf2+MAX_PATH);
-        p= argbuf2+largbuf2;
-        cygwin_conv_to_posix_path(args[i]+1, p);
+    char *argbuf2= NULL;
+    size_t i, largbuf2= 0;
+
+    for (i= 0; i<argc; i++) {
+      if (argv[i][0] == '[') {
+        size_t larg;
+        larg= strlen(argv[i]+1);   /* length-1 */
+        if (argv[i][larg] == ']') {
+          char* p;
+          argv[i][larg]= '\0';
+          argbuf2= realloc(argbuf2, largbuf2+MAX_PATH);
+          p= argbuf2+largbuf2;
+          cygwin_conv_to_posix_path(argv[i]+1, p);
 #ifdef CYGLAUNCH_DEBUG
-        fprintf(stderr, "%s: \"%s\" -> \"%s\"\n", myasctime(), args[i]+1, p);
+          fprintf(stderr, "%s: \"%s\" -> \"%s\"\n", myasctime(), argv[i]+1, p);
 #endif
-        args[i]= p;
-        largbuf2 += strlen (p) + 1;
+          argv[i]= p;
+          largbuf2 += strlen (p) + 1;
+        }
       }
     }
-  }
 #endif
 
-  if ((pid= fork()) == 0) {
-    execvp(args[0], args);
-    perror(args[0]);
-    exit(127);
-  } else if (pid == -1) {
-    fprintf(stderr, "%s: %s\n", myasctime(), escargs(ntok, args));
-    perror("  -> fork failed");
-    fflush(stderr);
-    free(argbuf);
+    ok= spawn((size_t) argc, argv);
+
+#ifdef __CYGWIN__
     free(argbuf2);
-    return 0;
+#endif
   }
 
-  fprintf(stderr, "%s-%d: %s\n", myasctime(), pid, escargs(ntok, args));
-  fflush(stderr);
   free(argbuf);
-  free(argbuf2);
-  return 1;
+  return ok;
 }
 
 static int
@@ -110,9 +129,9 @@ exitHandler(const void *data, DWORD ldata)
 }
 
 
-char*            topics[]=        {"exec",       "exit"      };
-topicHandlerType topicHandlers[]= {&execHandler, &exitHandler};
-const size_t ntopics= sizeof(topics)/sizeof(topics[0]);
+static const char*            topics[]=        {"exec",       "exit"      };
+static const topicHandlerType topicHandlers[]= {&execHandler, &exitHandler};
+static const size_t ntopics= sizeof(topics)/sizeof(topics[0]);
 
 
 static HDDEDATA CALLBACK
@@ -194,8 +213,8 @@ DdeServerProc (
             ddeReturn= DdeCreateDataHandle(ddeInstance, NULL, (ntopics+1)*sizeof(HSZPAIR), 0, 0, 0, 0);
             returnPtr = (HSZPAIR*) DdeAccessData(ddeReturn, &ls);
             for (i= 0; i<ntopics; i++) {
-              returnPtr[i].hszSvc=   DdeCreateStringHandle(ddeInstance, ddeServiceName, CP_WINANSI);
-              returnPtr[i].hszTopic= DdeCreateStringHandle(ddeInstance, topics[i],      CP_WINANSI);
+              returnPtr[i].hszSvc=   DdeCreateStringHandle(ddeInstance, (LPTSTR) ddeServiceName, CP_WINANSI);
+              returnPtr[i].hszTopic= DdeCreateStringHandle(ddeInstance, (LPTSTR) topics[i],      CP_WINANSI);
             }
             returnPtr[i].hszSvc=   NULL;
             returnPtr[i].hszTopic= NULL;
@@ -206,13 +225,13 @@ DdeServerProc (
     return NULL;
 }
 
-void
+static void
 perrorWin(const char* prefix, DWORD errnum)
 {
   LPTSTR lpMsgBuf= NULL;
   if (!FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                      NULL, errnum,
-                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
+                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), /* Default language */
                      (LPTSTR) &lpMsgBuf, 0, NULL))
     fprintf(stderr, "%s: %s: error number %ld", myasctime(), prefix, errnum);
   else
@@ -221,6 +240,33 @@ perrorWin(const char* prefix, DWORD errnum)
     LocalFree(lpMsgBuf);
 }
 
+
+static const char*
+parseopt(const char* p)
+{
+  switch (*p++) {
+  case 'H':
+    optH= 1;
+    break;
+  case 'h':
+  case '?':
+    opth= 1;
+    break;
+  default:
+    return NULL;
+  }
+  return p;
+}
+
+
+static int
+usage()
+{
+  fprintf(stderr, "Usage: %s [-H] [COMMAND]\n", prog);
+  return 1;
+}
+
+
 int
 main (int argc, char* argv[])
 {
@@ -228,6 +274,39 @@ main (int argc, char* argv[])
   HSZ ddeService= 0;
   MSG msg;
   BOOL bRet;
+  size_t i;
+  const char* envcmd;
+
+  prog= argv[0];
+
+  for (i= 1; i < argc; i++) {
+    const char* p;
+    if (argv[i][0] != '-') break;
+    if (argv[i][1] == '-' && argv[i][2] == '\0') {
+      i++;
+      break;
+    }
+    for (p= argv[i]+1; *p;) {
+      p= parseopt(p);
+      if (!p) {
+        fprintf(stderr, "%s: invalid option: %s\n", prog, argv[i]);
+        return 2;
+      }
+    }
+  }
+
+  if (opth) return usage();
+
+  if ((envcmd= getenv(cmd_envvar))) {
+    size_t lcmd= strlen(envcmd);
+    char* cmd= (char*) malloc(lcmd+1);
+    strcpy(cmd, envcmd);
+    unsetenv(cmd_envvar);
+    execHandler(cmd, lcmd);
+  }
+
+  if (argc > i)
+    spawn (argc-i, argv+i);
 
   err= DdeInitialize(&ddeInstance, DdeServerProc,
                      CBF_SKIP_ALLNOTIFICATIONS | CBF_FAIL_POKES | CBF_FAIL_REQUESTS, 0);
@@ -236,7 +315,7 @@ main (int argc, char* argv[])
     return 1;
   }
 
-  ddeService= DdeCreateStringHandle(ddeInstance, ddeServiceName, 0);
+  ddeService= DdeCreateStringHandle(ddeInstance, (LPTSTR) ddeServiceName, 0);
   DdeNameService(ddeInstance, ddeService, 0L, DNS_REGISTER);
 
   while ((bRet= GetMessage(&msg, NULL, 0, 0)) != 0) {
@@ -250,7 +329,7 @@ main (int argc, char* argv[])
   }
 
   fprintf (stderr, "%s: Exit\n", myasctime());
-  DdeNameService(ddeInstance, NULL, 0, DNS_UNREGISTER);
+  DdeNameService(ddeInstance, 0L, 0L, DNS_UNREGISTER);
   DdeUninitialize(ddeInstance);
   return msg.wParam;
 }

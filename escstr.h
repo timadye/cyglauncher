@@ -15,7 +15,7 @@
 
 extern const char* escstrl(const char* s, unsigned int ls);
 extern const char* escstr(const char* s);
-extern const char* escargs(size_t argc, char* argv[]);
-extern int         splitargs(const char* s, char** argv, size_t maxargs, char* buf, size_t maxbuf);
+extern const char* escargs(size_t argc, char* const argv[]);
+extern int         splitargs(const char* s, char* argv[], size_t maxargs, char* buf, size_t maxbuf);
 
 #endif /* ESCSTR_H */
