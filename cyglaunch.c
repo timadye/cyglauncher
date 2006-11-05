@@ -23,12 +23,12 @@
 
 static const char ddeServiceName[]= "cyglaunch";
 static const char cmd_envvar[]= "CYGLAUNCH_EXEC";  /* must be upper case because Cygwin converts DOS envvars to u/c */
+static const char cyglauncher_envvar[]= "CYGLAUNCHER_CMD";
 static const char cyglauncher_cmd[]= "cyglauncher-start";
 static const char *cyglauncher_args= NULL;
 static const char *prog= "cyglaunch";  /* replaced with argv[0] if known */
 static DWORD ddeInstance= 0;
-static int opte= 0, opth= 0;
-
+static int verbose= 0, opte= 0, opth= 0;
 
 static HDDEDATA CALLBACK
 DdeServerProc (UINT uType, UINT uFmt, HCONV hConv, HSZ ddeTopic, HSZ ddeItem,
@@ -42,16 +42,21 @@ DdeServerProc (UINT uType, UINT uFmt, HCONV hConv, HSZ ddeTopic, HSZ ddeItem,
 
 #ifdef __CYGWIN__
 #define errmsg(...) (fprintf(stderr,__VA_ARGS__), fflush(stderr))
+#define dbgmsg(...) (verbose ? (fprintf(stdout,__VA_ARGS__), fflush(stdout)) : 0)
 #else
-static void
-errmsg(const char* fmt,...)
+#define errmsg(...) (msgbox(0, __VA_ARGS__))
+#define dbgmsg(...) (verbose ? msgbox(1, __VA_ARGS__) : 0)
+static int
+msgbox(int dbg, const char* fmt,...)
 {
   char s[4096];
+  int n;
   va_list ap;
   va_start(ap, fmt);
-  vsnprintf(s, sizeof(s), fmt, ap);
+  n= vsnprintf(s, sizeof(s), fmt, ap);
   va_end(ap);
-  MessageBox(NULL, s, NULL, 0);
+  MessageBox(NULL, s, dbg ? "Debug" : NULL, 0);
+  return n;
 }
 #endif
 
@@ -106,6 +111,9 @@ start_cyglauncher(const char* cmd)
 {
   DWORD err, ldir;
   LPTSTR dir= NULL, cwd= "";
+  char* launch;
+  char* args;
+  const char* envcmd;
 
   if (!SetEnvironmentVariable(cmd_envvar, cmd)) {
     perrorWin("SetEnvironmentVariable error", GetLastError());
@@ -116,10 +124,24 @@ start_cyglauncher(const char* cmd)
     dir= (char*) malloc(ldir * sizeof(LPTSTR*));
     if (GetCurrentDirectory(ldir, dir)) cwd= dir;
   }
-  err= (DWORD) ShellExecute(NULL, "open", cyglauncher_cmd, cyglauncher_args, cwd, SW_SHOWMINIMIZED);
+
+  if ((envcmd= getenv(cyglauncher_envvar))) {
+    size_t lcmd= strlen(envcmd);
+    launch= (char*) malloc(lcmd+1);
+    strcpy(launch, envcmd);
+    args= strchr (launch, ' ');
+    if (args) *args++= '\0';
+  } else {
+    launch= (char*) cyglauncher_cmd;
+    args=   (char*) cyglauncher_args;
+  }
+
+  dbgmsg ("start_cyglauncher: \"%s\" \"%s\" in \"%s\"\n", launch, args ? args : "", cwd);
+  err= (DWORD) ShellExecute (NULL, NULL, launch, args, cwd, SW_SHOWMINIMIZED);
+  if (envcmd) free(launch);
   free(dir);
   if (err <= 32) {
-    perrorWin(cyglauncher_cmd, err);
+    perrorWin(launch, err);
     return 1;
   }
   if (!SetEnvironmentVariable(cmd_envvar, NULL))
@@ -185,9 +207,7 @@ launch(const char* u)
   if (opte) {
     sendCommand("exit", u);
   } else {
-#ifdef __CYGWIN__
-    fprintf(stderr, "command: %s\n", u);
-#endif
+    dbgmsg ("command: %s\n", u);
     sendCommand("exec", u);
   }
 
@@ -202,6 +222,9 @@ parseopt(const char* p)
   switch (*p++) {
   case 'e':
     opte= 1;
+    break;
+  case 'v':
+    verbose= 1;
     break;
   case 'h':
   case '?':
