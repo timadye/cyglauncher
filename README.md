@@ -3,8 +3,8 @@ Cyglauncher
 
 Cyglauncher allows multiple Cygwin applications to be executed from a single
 parent process - initiated by Windows commands. It consists of two parts:
-**cyglaunch** is a small Windows client that requests that a Cygwin
-command be executed, and **cyglauncher** is a Cygwin server that
+`cyglaunch` is a small Windows client that requests that a Cygwin
+command be executed, and `cyglauncher` is a Cygwin server that
 spawns the requested commands. cyglaunch will automatically start cyglauncher
 if it isn't already running.
 
@@ -21,7 +21,7 @@ instead of one per client, or none (if `run` is used).
 does not need to be duplicated in each application's shortcut
 (and if changed, only needs to be changed once).
 
-The cyglaunch<tt>-&gt;</tt>cyglauncher communication uses [Windows DDE](http://msdn.microsoft.com/library/en-us/winui/winui/windowsuserinterface/dataexchange/dynamicdataexchangemanagementlibrary.asp"),
+The cyglaunch&#8594;cyglauncher communication uses [Windows DDE](http://msdn.microsoft.com/library/en-us/winui/winui/windowsuserinterface/dataexchange/dynamicdataexchangemanagementlibrary.asp"),
 so this should allow Cygwin applications to started from the Windows Explorer,
 based on file-type associations. However this currently has to be set up
 manually - and I have not been able to get it to automatically start
@@ -33,7 +33,7 @@ Currently this is pre-release software, so I haven't really made any proper
 documentation or nice setup. If you are interested in trying this, please
 let me know and I'll try to make something a little better.
 
-Download [binaries](https://hepunx.rl.ac.uk/~adye/software/cygwin/cyglauncher.zip) or [source](https://hepunx.rl.ac.uk/~adye/software/cygwin/cyglauncher-src.zip).
+Download [binaries](https://hepunx.rl.ac.uk/~adye/software/cygwin/cyglauncher.zip) or build from [source](https://github.com/timadye/cyglauncher).
 
 Unzip the binaries into a common directory. Modify the `cyglauncher-start`
 shortcut (or replace it with a `cyglauncher-start.bat` batch file)
@@ -57,6 +57,6 @@ I didn't notice any difference.
 
 The cyglauncher application can run in a DOS box, rxvt, xterm, or whatever
 (depends on how you start it in `cyglaunch-start`).
-It can be stopped with **`^C`** or `cyglaunch -e`.
+It can be stopped with `^C` or `cyglaunch -e`.
 Its children continue to run after it dies (except, for some reason, when its running
 in a DOS box).
