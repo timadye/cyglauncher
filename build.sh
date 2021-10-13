@@ -15,9 +15,9 @@ test $# -eq 0 && set -- -Wall
 set -x
 ${c}gcc "$@" -o escstr.o          -c escstr.c
 ${m}gcc "$@" -o escstr-win.o      -c escstr.c                   -mwindows
-${m}gcc "$@" -o cyglaunch.exe        cyglaunch.c   escstr-win.o -mwindows
-${c}gcc "$@" -o cyglaunch-cygwin.exe cyglaunch.c   escstr.o
-${c}gcc "$@" -o cyglauncher.exe      cyglauncher.c escstr.o
+${m}gcc "$@" -o cyglaunch.exe        cyglaunch.c   escstr-win.o -mwindows -lshlwapi
+${c}gcc "$@" -o cyglaunch-cygwin.exe cyglaunch.c   escstr.o               -lshlwapi
+${c}gcc "$@" -o cyglauncher.exe      cyglauncher.c escstr.o               -lshlwapi
 rm escstr.o escstr-win.o
 ${m}strip -p cyglaunch.exe
 ${c}strip -p cyglaunch-cygwin.exe cyglauncher.exe

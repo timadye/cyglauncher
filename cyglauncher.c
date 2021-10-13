@@ -20,12 +20,16 @@
 #include <sys/cygwin.h>
 #endif
 #include <windows.h>
+#include <shlwapi.h>
 
 #include "escstr.h"
 
 typedef int (*topicHandlerType)(const void *data, DWORD ldata);
 static const char ddeServiceName[]= "cyglaunch";
 static const char cmd_envvar[]= "CYGLAUNCH_EXEC";  /* must be upper case because Cygwin converts DOS envvars to u/c */
+static const char exit_envvar[]= "CYGLAUNCHER_EXIT_CMD";
+static const char exit_cmd[]= "cyglauncher-exit";
+static const char *exit_args= NULL;
 static const char *prog;
 static DWORD ddeInstance= 0;
 static int opth= 0, optH= 0;
@@ -39,6 +43,25 @@ myasctime()
   t= time(NULL);
   strftime(buf, sizeof(buf), "%Y/%m/%d-%H:%M:%S", localtime(&t));
   return buf;
+}
+
+static void
+perrorWin(const char* prefix, DWORD errnum)
+{
+  LPTSTR lpMsgBuf= NULL;
+  if (!FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                     NULL, errnum,
+                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), /* Default language */
+                     (LPTSTR) &lpMsgBuf, 0, NULL))
+#ifdef _WIN64
+    fprintf(stderr, "%s: %s: error number %u",  myasctime(), prefix, errnum);
+#else
+    fprintf(stderr, "%s: %s: error number %lu", myasctime(), prefix, errnum);
+#endif
+  else
+    fprintf(stderr, "%s: %s: %s", myasctime(), prefix, lpMsgBuf);
+  if (lpMsgBuf)
+    LocalFree(lpMsgBuf);
 }
 
 static int
@@ -122,8 +145,67 @@ execHandler(const void *data, DWORD ldata)
 }
 
 static int
+run_exit_cmd()
+{
+  DWORD ldir;
+  INT_PTR err;
+  LPTSTR dir= NULL, cwd= "";
+  char* cmd;
+  char* cmdbuf= NULL;
+  char* args;
+  const char* cmdtime;
+  char progpath[MAX_PATH+1], abscmd[MAX_PATH+1];
+  const char* envcmd;
+
+  ldir= GetCurrentDirectory(0, NULL);
+  if (ldir) {
+    dir= (char*) malloc(ldir * sizeof(LPTSTR*));
+    if (GetCurrentDirectory(ldir, dir)) cwd= dir;
+  }
+
+  if ((envcmd= getenv(exit_envvar))) {
+    size_t lcmd= strlen(envcmd);
+    cmd= cmdbuf= (char*) malloc(lcmd+1);
+    strcpy(cmd, envcmd);
+    args= strchr (cmd, ' ');
+    if (args) *args++= '\0';
+  } else {
+    cmd=  (char*) exit_cmd;
+    args= (char*) exit_args;
+
+    if (PathIsRelative     (cmd)                           &&
+        GetModuleFileName  (0, progpath, sizeof(progpath)) &&
+        PathRemoveFileSpec (progpath)                      &&
+        PathCombine        (abscmd, progpath, cmd)) {
+#ifdef CYGLAUNCH_DEBUG
+      fprintf(stderr, "run_exit_cmd: \"%s\" -> \"%s\"\n", cmd, abscmd);
+#endif
+      cmd= abscmd;
+    }
+  }
+
+#ifdef CYGLAUNCH_DEBUG
+  fprintf(stderr, "run_exit_cmd: \"%s\" \"%s\" in \"%s\"\n", cmd, args ? args : "", cwd);
+#endif
+  cmdtime= myasctime();
+  err= (INT_PTR) ShellExecute (NULL, NULL, cmd, args, cwd, SW_SHOWMINIMIZED);
+  free(dir);
+  if (err <= 32) {
+#ifdef CYGLAUNCH_DEBUG
+    perrorWin(cmd, err);
+#endif
+    free(cmdbuf);
+    return 1;
+  }
+  fprintf (stderr, "%s: %s %s\n", cmdtime, cmd, args ? args : "");
+  free(cmdbuf);
+  return 0;
+}
+
+static int
 exitHandler(const void *data, DWORD ldata)
 {
+  run_exit_cmd();
   PostQuitMessage(0);
   return 1;
 }
@@ -222,25 +304,6 @@ DdeServerProc (
         }
     }
     return NULL;
-}
-
-static void
-perrorWin(const char* prefix, DWORD errnum)
-{
-  LPTSTR lpMsgBuf= NULL;
-  if (!FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                     NULL, errnum,
-                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), /* Default language */
-                     (LPTSTR) &lpMsgBuf, 0, NULL))
-#ifdef _WIN64
-    fprintf(stderr, "%s: %s: error number %u",  myasctime(), prefix, errnum);
-#else
-    fprintf(stderr, "%s: %s: error number %lu", myasctime(), prefix, errnum);
-#endif
-  else
-    fprintf(stderr, "%s: %s: %s", myasctime(), prefix, lpMsgBuf);
-  if (lpMsgBuf)
-    LocalFree(lpMsgBuf);
 }
 
 

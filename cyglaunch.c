@@ -18,6 +18,7 @@
 #include <sys/cygwin.h>
 #endif
 #include <windows.h>
+#include <shlwapi.h>
 
 #include "escstr.h"
 
@@ -121,7 +122,9 @@ start_cyglauncher(const char* cmd)
   INT_PTR err;
   LPTSTR dir= NULL, cwd= "";
   char* launch;
+  char* cmdbuf= NULL;
   char* args;
+  char progpath[MAX_PATH+1], abscmd[MAX_PATH+1];
   const char* envcmd;
 
   if (!SetEnvironmentVariable(cmd_envvar, cmd)) {
@@ -136,23 +139,31 @@ start_cyglauncher(const char* cmd)
 
   if ((envcmd= getenv(cyglauncher_envvar))) {
     size_t lcmd= strlen(envcmd);
-    launch= (char*) malloc(lcmd+1);
+    launch= cmdbuf= (char*) malloc(lcmd+1);
     strcpy(launch, envcmd);
     args= strchr (launch, ' ');
     if (args) *args++= '\0';
   } else {
     launch= (char*) cyglauncher_cmd;
     args=   (char*) cyglauncher_args;
+    if (PathIsRelative     (launch)                        &&
+        GetModuleFileName  (0, progpath, sizeof(progpath)) &&
+        PathRemoveFileSpec (progpath)                      &&
+        PathCombine        (abscmd, progpath, launch)) {
+      dbgmsg ("start_cyglauncher: \"%s\" -> \"%s\"\n", launch, abscmd);
+      launch= abscmd;
+    }
   }
 
   dbgmsg ("start_cyglauncher: \"%s\" \"%s\" in \"%s\"\n", launch, args ? args : "", cwd);
   err= (INT_PTR) ShellExecute (NULL, NULL, launch, args, cwd, SW_SHOWMINIMIZED);
-  if (envcmd) free(launch);
   free(dir);
   if (err <= 32) {
     perrorWin(launch, err);
+    free(cmdbuf);
     return 1;
   }
+  free(cmdbuf);
   if (!SetEnvironmentVariable(cmd_envvar, NULL))
     perrorWin("SetEnvironmentVariable error (unset)", GetLastError());  /* not fatal */
   return 0;
