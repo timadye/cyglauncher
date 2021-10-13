@@ -13,11 +13,11 @@ the Cygwin X-windows application directly from the shortcut.
 This means that the Cygwin environment (`.profile` etc) is only created once.
 This approach has several advantages.
 
-  - It is slightly faster.
-  - It allows sharing of configuration information (eg. ssh-agent socket).
-  - There is only one console shared between all X-windows clients -
+1. It is slightly faster.
+2. It allows sharing of configuration information (eg. ssh-agent socket).
+3. There is only one console shared between all X-windows clients -
 instead of one per client, or none (if `run` is used).
-  - The Cygwin setup is done in the cyglauncher shortcut or batch file, so
+4. The Cygwin setup is done in the cyglauncher shortcut or batch file, so
 does not need to be duplicated in each application's shortcut
 (and if changed, only needs to be changed once).
 
@@ -44,9 +44,9 @@ the [Exceed X-server](http://connectivity.hummingbird.com/products/nc/exceed/)).
 
 To start an application, run
 
-```
-cyglaunch *applicationName*
-```
+<pre>
+cyglaunch <em>applicationName</em>
+</pre>
 
 from a shortcut, DOS box, or bash prompt.
 *`applicationName`* can contain a Cygwin path (or else is located using the Cygwin `$PATH`).
