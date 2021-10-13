@@ -99,7 +99,7 @@ execHandler(const void *data, DWORD ldata)
           argv[i][larg]= '\0';
           argbuf2= realloc(argbuf2, largbuf2+MAX_PATH);
           p= argbuf2+largbuf2;
-          cygwin_conv_to_posix_path(argv[i]+1, p);
+          cygwin_conv_path(CCP_WIN_A_TO_POSIX, argv[i]+1, p, MAX_PATH);
 #ifdef CYGLAUNCH_DEBUG
           fprintf(stderr, "%s: \"%s\" -> \"%s\"\n", myasctime(), argv[i]+1, p);
 #endif
@@ -147,8 +147,8 @@ DdeServerProc (
     HSZ ddeItem,                /* A string handle. Transaction-type
                                  * dependent. */
     HDDEDATA hData,             /* DDE data. Transaction-type dependent. */
-    DWORD dwData1,              /* Transaction-dependent data. */
-    DWORD dwData2)              /* Transaction-dependent data. */
+    DWORD_PTR dwData1,          /* Transaction-dependent data. */
+    DWORD_PTR dwData2)          /* Transaction-dependent data. */
 {
 
     switch(uType) {
@@ -160,10 +160,9 @@ DdeServerProc (
              */
 
             char buf[256];
-            DWORD lbuf;
             size_t i;
 
-            lbuf = DdeQueryString(ddeInstance, ddeTopic, buf, sizeof(buf), CP_WINANSI);
+            DdeQueryString(ddeInstance, ddeTopic, buf, sizeof(buf), CP_WINANSI);
 
             for (i= 0; i<ntopics; i++) {
               if (!strcmp (buf, topics[i]))
@@ -233,7 +232,11 @@ perrorWin(const char* prefix, DWORD errnum)
                      NULL, errnum,
                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), /* Default language */
                      (LPTSTR) &lpMsgBuf, 0, NULL))
-    fprintf(stderr, "%s: %s: error number %ld", myasctime(), prefix, errnum);
+#ifdef _WIN64
+    fprintf(stderr, "%s: %s: error number %u",  myasctime(), prefix, errnum);
+#else
+    fprintf(stderr, "%s: %s: error number %lu", myasctime(), prefix, errnum);
+#endif
   else
     fprintf(stderr, "%s: %s: %s", myasctime(), prefix, lpMsgBuf);
   if (lpMsgBuf)

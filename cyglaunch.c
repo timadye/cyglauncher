@@ -32,7 +32,7 @@ static int verbose= 0, opte= 0, opth= 0;
 
 static HDDEDATA CALLBACK
 DdeServerProc (UINT uType, UINT uFmt, HCONV hConv, HSZ ddeTopic, HSZ ddeItem,
-               HDDEDATA hData, DWORD dwData1, DWORD dwData2)
+               HDDEDATA hData, DWORD_PTR dwData1, DWORD_PTR dwData2)
 {
   /* Being a simple client application not taking care of any transaction.
      simply return NULL */
@@ -68,7 +68,11 @@ perrorWin(const char* prefix, DWORD errnum)
                      NULL, errnum,
                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), /* Default language */
                      (LPTSTR) &lpMsgBuf, 0, NULL))
-    errmsg("%s: %s: error number %ld\n", prog, prefix, errnum);
+#ifdef _WIN64
+    errmsg("%s: %s: error number %u\n",  prog, prefix, errnum);
+#else
+    errmsg("%s: %s: error number %lu\n", prog, prefix, errnum);
+#endif
   else
     errmsg("%s: %s: %s\n", prog, prefix, lpMsgBuf);
   if (lpMsgBuf)
@@ -102,14 +106,19 @@ perrorDde(const char* prefix, DWORD errnum)
   default:
     msg= "DDE command failed";
   }
-  errmsg("%s: %s: %s (error %ld)\n", prog, prefix, msg, errnum);
+#ifdef _WIN64
+  errmsg("%s: %s: %s (error %u)\n",  prog, prefix, msg, errnum);
+#else
+  errmsg("%s: %s: %s (error %lu)\n", prog, prefix, msg, errnum);
+#endif
 }
 
 
 static int
 start_cyglauncher(const char* cmd)
 {
-  DWORD err, ldir;
+  DWORD ldir;
+  INT_PTR err;
   LPTSTR dir= NULL, cwd= "";
   char* launch;
   char* args;
@@ -137,7 +146,7 @@ start_cyglauncher(const char* cmd)
   }
 
   dbgmsg ("start_cyglauncher: \"%s\" \"%s\" in \"%s\"\n", launch, args ? args : "", cwd);
-  err= (DWORD) ShellExecute (NULL, NULL, launch, args, cwd, SW_SHOWMINIMIZED);
+  err= (INT_PTR) ShellExecute (NULL, NULL, launch, args, cwd, SW_SHOWMINIMIZED);
   if (envcmd) free(launch);
   free(dir);
   if (err <= 32) {
