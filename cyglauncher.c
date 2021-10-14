@@ -20,7 +20,6 @@
 #include <sys/cygwin.h>
 #endif
 #include <windows.h>
-#include <shlwapi.h>
 
 #include "escstr.h"
 
@@ -29,7 +28,6 @@ static const char ddeServiceName[]= "cyglaunch";
 static const char cmd_envvar[]= "CYGLAUNCH_EXEC";  /* must be upper case because Cygwin converts DOS envvars to u/c */
 static const char exit_envvar[]= "CYGLAUNCHER_EXIT_CMD";
 static const char exit_cmd[]= "cyglauncher-exit";
-static const char *exit_args= NULL;
 static const char *prog;
 static DWORD ddeInstance= 0;
 static int opth= 0, optH= 0;
@@ -65,7 +63,7 @@ perrorWin(const char* prefix, DWORD errnum)
 }
 
 static int
-spawn(size_t argc, char* const argv[])
+spawn(size_t argc, char* const argv[], int show_err)
 {
   pid_t pid;
   fflush(NULL);
@@ -78,7 +76,7 @@ spawn(size_t argc, char* const argv[])
     }
 #endif
     execvp(argv[0], argv);
-    perror(argv[0]);
+    if (show_err) perror(argv[0]);
     exit((errno == ENOENT) ? 127 : 126);
   } else if (pid == -1) {
     fprintf(stderr, "%s: %s\n", myasctime(), escargs(argc, argv));
@@ -92,7 +90,7 @@ spawn(size_t argc, char* const argv[])
 }
 
 static int
-execHandler(const void *data, DWORD ldata)
+do_exec(const void *data, DWORD ldata, int show_err)
 {
   char *argv[1024], *argbuf;
   int argc, ok= 0;
@@ -102,12 +100,16 @@ execHandler(const void *data, DWORD ldata)
   argbuf= (char*) malloc (largbuf * sizeof(char));
   argc= splitargs(data, argv, sizeof(argv)/sizeof(argv[0]), argbuf, largbuf);
   if        (argc <  0) {
-    fprintf(stderr, "%s: %s\n", myasctime(), (const char*) data);
-    fprintf(stderr, "  -> command execution failed: too many command arguments\n");
-    fflush(stderr);
+    if (show_err) {
+      fprintf(stderr, "%s: %s\n", myasctime(), (const char*) data);
+      fprintf(stderr, "  -> command execution failed: too many command arguments\n");
+      fflush(stderr);
+    }
   } else if (argc == 0) {
-    fprintf(stderr, "%s: null command ignored\n", myasctime());
-    fflush(stderr);
+    if (show_err) {
+      fprintf(stderr, "%s: null command ignored\n", myasctime());
+      fflush(stderr);
+    }
   } else {
 #ifdef __CYGWIN__
     char *argbuf2= NULL;
@@ -133,7 +135,7 @@ execHandler(const void *data, DWORD ldata)
     }
 #endif
 
-    ok= spawn((size_t) argc, argv);
+    ok= spawn((size_t) argc, argv, show_err);
 
 #ifdef __CYGWIN__
     free(argbuf2);
@@ -145,61 +147,23 @@ execHandler(const void *data, DWORD ldata)
 }
 
 static int
+execHandler(const void *data, DWORD ldata)
+{
+  return do_exec (data, ldata, 1);
+}
+
+static int
 run_exit_cmd()
 {
-  DWORD ldir;
-  INT_PTR err;
-  LPTSTR dir= NULL, cwd= "";
-  char* cmd;
-  char* cmdbuf= NULL;
-  char* args;
-  const char* cmdtime;
-  char progpath[MAX_PATH+1], abscmd[MAX_PATH+1];
+  const char* data;
   const char* envcmd;
 
-  ldir= GetCurrentDirectory(0, NULL);
-  if (ldir) {
-    dir= (char*) malloc(ldir * sizeof(LPTSTR*));
-    if (GetCurrentDirectory(ldir, dir)) cwd= dir;
-  }
-
   if ((envcmd= getenv(exit_envvar))) {
-    size_t lcmd= strlen(envcmd);
-    cmd= cmdbuf= (char*) malloc(lcmd+1);
-    strcpy(cmd, envcmd);
-    args= strchr (cmd, ' ');
-    if (args) *args++= '\0';
+    data= envcmd;
   } else {
-    cmd=  (char*) exit_cmd;
-    args= (char*) exit_args;
-
-    if (PathIsRelative     (cmd)                           &&
-        GetModuleFileName  (0, progpath, sizeof(progpath)) &&
-        PathRemoveFileSpec (progpath)                      &&
-        PathCombine        (abscmd, progpath, cmd)) {
-#ifdef CYGLAUNCH_DEBUG
-      fprintf(stderr, "run_exit_cmd: \"%s\" -> \"%s\"\n", cmd, abscmd);
-#endif
-      cmd= abscmd;
-    }
+    data= exit_cmd;
   }
-
-#ifdef CYGLAUNCH_DEBUG
-  fprintf(stderr, "run_exit_cmd: \"%s\" \"%s\" in \"%s\"\n", cmd, args ? args : "", cwd);
-#endif
-  cmdtime= myasctime();
-  err= (INT_PTR) ShellExecute (NULL, NULL, cmd, args, cwd, SW_SHOWMINIMIZED);
-  free(dir);
-  if (err <= 32) {
-#ifdef CYGLAUNCH_DEBUG
-    perrorWin(cmd, err);
-#endif
-    free(cmdbuf);
-    return 1;
-  }
-  fprintf (stderr, "%s: %s %s\n", cmdtime, cmd, args ? args : "");
-  free(cmdbuf);
-  return 0;
+  return do_exec (data, strlen(data), 0);
 }
 
 static int
@@ -372,7 +336,7 @@ main (int argc, char* argv[])
   }
 
   if (argc > i)
-    spawn (argc-i, argv+i);
+    spawn (argc-i, argv+i, 1);
 
   err= DdeInitialize(&ddeInstance, DdeServerProc,
                      CBF_SKIP_ALLNOTIFICATIONS | CBF_FAIL_POKES | CBF_FAIL_REQUESTS, 0);
