@@ -89,8 +89,30 @@ spawn(size_t argc, char* const argv[], int show_err)
   return 1;
 }
 
+static void
+do_exec(size_t argc, char* const argv[], int show_err)
+{
+  fflush(NULL);
+  if (!argc) exit(127);
+#ifdef __CYGWIN__
+  if (!optH) {
+    sigset_t sigset;
+    if (!sigemptyset(&sigset) && !sigaddset(&sigset, SIGHUP))
+      sigprocmask(SIG_BLOCK, &sigset, NULL);
+  }
+#endif
+  if (!show_err) {
+    close(0);
+    close(1);
+    close(2);
+  }
+  execvp(argv[0], argv);
+  if (show_err) perror(argv[0]);
+  exit((errno == ENOENT) ? 127 : 126);
+}
+
 static int
-do_exec(const void *data, DWORD ldata, int show_err)
+run_cmd(const void *data, DWORD ldata, int use_exec)
 {
   char *argv[1024], *argbuf;
   int argc, ok= 0;
@@ -100,13 +122,13 @@ do_exec(const void *data, DWORD ldata, int show_err)
   argbuf= (char*) malloc (largbuf * sizeof(char));
   argc= splitargs(data, argv, sizeof(argv)/sizeof(argv[0]), argbuf, largbuf);
   if        (argc <  0) {
-    if (show_err) {
+    if (!use_exec) {
       fprintf(stderr, "%s: %s\n", myasctime(), (const char*) data);
       fprintf(stderr, "  -> command execution failed: too many command arguments\n");
       fflush(stderr);
     }
   } else if (argc == 0) {
-    if (show_err) {
+    if (!use_exec) {
       fprintf(stderr, "%s: null command ignored\n", myasctime());
       fflush(stderr);
     }
@@ -135,7 +157,12 @@ do_exec(const void *data, DWORD ldata, int show_err)
     }
 #endif
 
-    ok= spawn((size_t) argc, argv, show_err);
+    if (use_exec) {
+      do_exec ((size_t) argc, argv, 0);
+      ok= 0;
+    } else {
+      ok= spawn((size_t) argc, argv, 1);
+    }
 
 #ifdef __CYGWIN__
     free(argbuf2);
@@ -149,7 +176,7 @@ do_exec(const void *data, DWORD ldata, int show_err)
 static int
 execHandler(const void *data, DWORD ldata)
 {
-  return do_exec (data, ldata, 1);
+  return run_cmd (data, ldata, 0);
 }
 
 static int
@@ -163,13 +190,12 @@ run_exit_cmd()
   } else {
     data= exit_cmd;
   }
-  return do_exec (data, strlen(data), 0);
+  return run_cmd (data, strlen(data), 1);
 }
 
 static int
 exitHandler(const void *data, DWORD ldata)
 {
-  run_exit_cmd();
   PostQuitMessage(0);
   return 1;
 }
@@ -361,5 +387,6 @@ main (int argc, char* argv[])
   fprintf (stderr, "%s: Exit\n", myasctime());
   DdeNameService(ddeInstance, 0L, 0L, DNS_UNREGISTER);
   DdeUninitialize(ddeInstance);
+  run_exit_cmd();
   return msg.wParam;
 }
